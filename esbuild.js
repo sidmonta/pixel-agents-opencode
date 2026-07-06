@@ -36,10 +36,13 @@ function copyAssets() {
 
 /**
  * Bundle hook scripts (TypeScript) to dist/hooks via esbuild.
- * Produces a self-contained CJS file with shebang for Claude Code to execute.
+ * Produces self-contained scripts for each provider's hook/plugin:
+ *   - claude-hook.js  (CJS + shebang, for Claude Code's command hooks)
+ *   - pixel-agents.mjs (ESM, for Opencode's plugin loader)
  */
 function buildHooks() {
-  const entry = path.join(
+  // Claude hook: CJS with shebang (spawned as a child process)
+  const claudeEntry = path.join(
     __dirname,
     'server',
     'src',
@@ -49,17 +52,41 @@ function buildHooks() {
     'hooks',
     'claude-hook.ts',
   );
-  if (!fs.existsSync(entry)) return;
-  require('esbuild').buildSync({
-    entryPoints: [entry],
-    bundle: true,
-    platform: 'node',
-    target: 'node18',
-    format: 'cjs',
-    outdir: path.join(__dirname, 'dist', 'hooks'),
-    banner: { js: '#!/usr/bin/env node' },
-  });
-  console.log('✓ Built hooks/ → dist/hooks/');
+  if (fs.existsSync(claudeEntry)) {
+    require('esbuild').buildSync({
+      entryPoints: [claudeEntry],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',
+      format: 'cjs',
+      outdir: path.join(__dirname, 'dist', 'hooks'),
+      banner: { js: '#!/usr/bin/env node' },
+    });
+    console.log('✓ Built claude-hook → dist/hooks/');
+  }
+
+  // Opencode plugin: ESM (loaded by Opencode's plugin loader)
+  const opencodeEntry = path.join(
+    __dirname,
+    'server',
+    'src',
+    'providers',
+    'hook',
+    'opencode',
+    'hooks',
+    'opencode-hook.ts',
+  );
+  if (fs.existsSync(opencodeEntry)) {
+    require('esbuild').buildSync({
+      entryPoints: [opencodeEntry],
+      bundle: true,
+      platform: 'node',
+      target: 'node20',
+      format: 'esm',
+      outfile: path.join(__dirname, 'dist', 'hooks', 'pixel-agents.js'),
+    });
+    console.log('✓ Built opencode plugin → dist/hooks/pixel-agents.js');
+  }
 }
 
 /**

@@ -186,8 +186,8 @@ describe('PixelAgentsServer', () => {
     expect(res.status).toBe(404);
   });
 
-  // 14. Hook callback does NOT fire for events missing required fields
-  it('hook callback does not fire for events without session_id', async () => {
+  // 14. Hook callback fires for events without session_id (providers validate their own shape)
+  it('hook callback fires for events without session_id', async () => {
     const config = await server.start();
     const received: unknown[] = [];
     server.onHookEvent((_pid: string, event: Record<string, unknown>) => received.push(event));
@@ -198,6 +198,6 @@ describe('PixelAgentsServer', () => {
       JSON.stringify({ hook_event_name: 'Stop' }), // missing session_id
     );
 
-    expect(received).toHaveLength(0);
+    expect(received).toHaveLength(1);
   });
 });

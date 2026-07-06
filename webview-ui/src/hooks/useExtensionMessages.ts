@@ -121,6 +121,7 @@ export function useExtensionMessages(
       hueShift?: number;
       seatId?: string;
       folderName?: string;
+      agentName?: string;
     }> = [];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,6 +174,9 @@ export function useExtensionMessages(
         // Add buffered agents now that layout (and seats) are correct
         for (const p of pendingAgents) {
           os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+          if (p.agentName) {
+            os.setTeamInfo(p.id, undefined, p.agentName);
+          }
         }
         pendingAgents = [];
         layoutReadyRef.current = true;
@@ -210,7 +214,11 @@ export function useExtensionMessages(
             ch.agentName = teammateName;
           }
         } else {
+          const agentName = msg.agentName as string | undefined;
           os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
+          if (agentName) {
+            os.setTeamInfo(id, undefined, agentName);
+          }
         }
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
@@ -246,16 +254,30 @@ export function useExtensionMessages(
           { palette?: number; hueShift?: number; seatId?: string }
         >;
         const folderNames = (msg.folderNames || {}) as Record<number, string>;
-        // Buffer agents — they'll be added in layoutLoaded after seats are built
-        for (const id of incoming) {
-          const m = meta[id];
-          pendingAgents.push({
-            id,
-            palette: m?.palette,
-            hueShift: m?.hueShift,
-            seatId: m?.seatId,
-            folderName: folderNames[id],
-          });
+        const agentNames = (msg.agentNames || {}) as Record<number, string>;
+        // If layout is already loaded, add agents directly (standalone: existingAgents
+        // arrives after layoutLoaded). Otherwise buffer for layoutLoaded.
+        if (layoutReadyRef.current) {
+          for (const id of incoming) {
+            const m = meta[id];
+            os.addAgent(id, m?.palette, m?.hueShift, m?.seatId, true, folderNames[id]);
+            if (agentNames[id]) {
+              os.setTeamInfo(id, undefined, agentNames[id]);
+            }
+          }
+          saveAgentSeats(os);
+        } else {
+          for (const id of incoming) {
+            const m = meta[id];
+            pendingAgents.push({
+              id,
+              palette: m?.palette,
+              hueShift: m?.hueShift,
+              seatId: m?.seatId,
+              folderName: folderNames[id],
+              agentName: agentNames[id],
+            });
+          }
         }
         setAgents((prev) => {
           const ids = new Set(prev);

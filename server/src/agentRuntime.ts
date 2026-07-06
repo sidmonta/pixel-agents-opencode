@@ -32,6 +32,7 @@ import {
 } from './fileWatcher.js';
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
+import { ProviderRegistry } from './providerRegistry.js';
 import { SessionRouter } from './sessionRouter.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { setHookProvider } from './transcriptParser.js';
@@ -43,6 +44,12 @@ export interface RuntimeLifecycleCallbacks {
   onAgentRemoved?: (agentId: number, agent: AgentState) => void;
   /** Called when a teammate is removed. */
   onTeammateRemoved?: (teammateId: number, agent: AgentState, source: string) => void;
+  /** Called when an external session is detected (first tool event from a new session). */
+  onExternalSessionDetected?: (sessionId: string) => void;
+  /** Called when a session ends (exit/logout). */
+  onSessionEnd?: (agentId: number) => void;
+  /** Called when the active agent changes within a session (Opencode agent switch). */
+  onAgentSwitch?: (sessionId: string, newAgentName: string) => void;
 }
 
 export class AgentRuntime {
@@ -71,14 +78,23 @@ export class AgentRuntime {
 
   constructor(
     private readonly store: AgentStateStore,
-    provider: HookProvider,
+    providers: HookProvider | HookProvider[],
   ) {
-    // Wire module-level dependencies
+    // Build provider registry from one or more providers
+    const providerList = Array.isArray(providers) ? providers : [providers];
+    const registry = new ProviderRegistry();
+    for (const p of providerList) {
+      registry.register(p);
+    }
+    // Primary provider = first registered (used for file-fallback, terminal launching)
+    const primaryProvider = providerList[0]!;
+
+    // Wire module-level dependencies (primary provider for file-fallback)
     setDismissalTracker(this.dismissalTracker);
-    setHookProvider(provider);
-    setFileWatcherHookProvider(provider);
-    if (provider.team) {
-      setTeamProvider(provider.team);
+    setHookProvider(primaryProvider);
+    setFileWatcherHookProvider(primaryProvider);
+    if (primaryProvider.team) {
+      setTeamProvider(primaryProvider.team);
     }
     setAgentRemovalCallback((id) => this.removeAgent(id));
     setTeammateRemovalCallback((id) => this.removeTeammate(id, 'team-config'));
@@ -87,7 +103,7 @@ export class AgentRuntime {
       store,
       this.waitingTimers,
       this.permissionTimers,
-      provider,
+      registry,
       new SessionRouter(),
       this.watchAllSessions,
     );
@@ -113,6 +129,7 @@ export class AgentRuntime {
           () => this.store.persist(),
           (agent) => this.registerAgent(agent.sessionId, agent.id),
         );
+        this.lifecycleCallbacks.onExternalSessionDetected?.(sessionId);
       },
       onSessionClear: (agentId, newSessionId, newTranscriptPath) => {
         if (newTranscriptPath) {
@@ -165,6 +182,7 @@ export class AgentRuntime {
       onSessionEnd: (agentId) => {
         const agent = this.store.get(agentId);
         if (!agent) return;
+        this.lifecycleCallbacks.onSessionEnd?.(agentId);
         this.dismissalTracker.clearSeededMtime(agent.jsonlFile);
         this.dismissalTracker.dismiss(agent.jsonlFile);
         if (agent.isTeamLead) {
@@ -174,6 +192,9 @@ export class AgentRuntime {
           this.unregisterAgent(agent.sessionId);
           this.removeAgent(agentId);
         }
+      },
+      onAgentSwitch: (sessionId, newAgentName) => {
+        this.lifecycleCallbacks.onAgentSwitch?.(sessionId, newAgentName);
       },
     });
   }

@@ -201,11 +201,15 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // 6. Existing agents (either just restored, or from VS Code adapter if present)
   const agentIds: number[] = [];
   const folderNames: Record<number, string> = {};
+  const agentNames: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
   for (const [id, agent] of store) {
     agentIds.push(id);
     if (agent.folderName) {
       folderNames[id] = agent.folderName;
+    }
+    if (agent.agentName) {
+      agentNames[id] = agent.agentName;
     }
     if (agent.isExternal) {
       externalAgents[id] = true;
@@ -217,6 +221,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     agents: agentIds,
     agentMeta: seats,
     folderNames,
+    agentNames,
     externalAgents,
   });
 }

@@ -80,6 +80,9 @@ export interface HookProvider {
   normalizeHookEvent(raw: Record<string, unknown>): {
     sessionId: string;
     event: AgentEvent;
+    /** Provider-specific agent name (e.g. opencode's `info.agent`). Used by the
+     *  runtime to swap the active character when the user switches agents. */
+    agentName?: string;
   } | null;
 
   /** Install hook scripts that POST to our server. */

@@ -120,9 +120,13 @@ function registerHookRoute(app: FastifyInstance, options: HttpServerOptions): vo
       const { providerId } = request.params;
       const event = request.body;
 
-      if (event.session_id && event.hook_event_name) {
-        options.onHookEvent?.(providerId, event);
-      }
+      // Forward to runtime for provider-specific normalization. The guard
+      // here is deliberately loose — each provider's normalizeHookEvent
+      // validates the shape. Early-return guards exist for the old single-
+      // event-name format (Claude uses hook_event_name + session_id; Opencode
+      // uses type + sessionId); the onHookEvent callback is the single
+      // dispatch point regardless of format.
+      options.onHookEvent?.(providerId, event);
 
       reply.send('ok');
     },
@@ -151,7 +155,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
 
     // Pipe store events to WebSocket client
     const onAgentAdded = (id: number, agent: AgentState) => {
-      safeSend(socket, {
+      const msg: Record<string, unknown> = {
         type: 'agentCreated',
         id,
         folderName: agent.folderName,
@@ -161,7 +165,11 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
         parentAgentId: agent.leadAgentId,
         teamName: agent.teamName,
         hooksOnly: agent.hooksOnly || undefined,
-      });
+      };
+      if (agent.agentName) {
+        msg.agentName = agent.agentName;
+      }
+      safeSend(socket, msg);
     };
 
     const onAgentRemoved = (id: number) => {
