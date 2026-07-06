@@ -689,8 +689,16 @@ describe('HookEventHandler', () => {
 
   // ── Provider-agnostic (optional transcript_path) ────────────
 
-  it('SessionStart stores pending with cwd only (no transcript_path)', () => {
-    const onExternalSessionDetected = vi.fn();
+  it('SessionStart creates hook-only agent immediately with cwd only (no transcript_path)', () => {
+    const onExternalSessionDetected = vi.fn((sessionId: string) => {
+      const agent = createTestAgent({
+        id: 2,
+        sessionId,
+        projectDir: '/projects/test',
+      } as Partial<AgentState>);
+      agents.set(2, agent);
+      handler.registerAgent(sessionId, 2);
+    });
     handler.setLifecycleCallbacks({ onExternalSessionDetected });
 
     handler.handleEvent('claude', {
@@ -700,31 +708,12 @@ describe('HookEventHandler', () => {
       cwd: '/projects/test',
     });
 
-    // Pending, no agent yet
-    expect(onExternalSessionDetected).not.toHaveBeenCalled();
-
-    // Simulate agent creation on confirmation
-    onExternalSessionDetected.mockImplementation((sessionId: string) => {
-      const agent = createTestAgent({
-        id: 2,
-        sessionId,
-        projectDir: '/projects/test',
-      } as Partial<AgentState>);
-      agents.set(2, agent);
-      handler.registerAgent(sessionId, 2);
-    });
-
-    // Confirmation event creates agent
-    handler.handleEvent('claude', {
-      hook_event_name: 'Stop',
-      session_id: 'no-transcript-sess',
-    });
-
     expect(onExternalSessionDetected).toHaveBeenCalledWith(
       'no-transcript-sess',
       undefined,
       '/projects/test',
     );
+    expect(agents.get(2)).toBeDefined();
   });
 
   it('SessionStart(source=resume) uses cwd for matching when no transcript_path', () => {

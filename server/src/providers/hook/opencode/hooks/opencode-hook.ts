@@ -38,6 +38,73 @@ function getServerConfig(): ServerConfig | null {
   return null;
 }
 
+const agentBySession = new Map<string, string>();
+
+function forwardToServer(event: Record<string, unknown>, config: ServerConfig): Promise<void> {
+  const body = JSON.stringify(event);
+  return new Promise<void>((resolve) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: config.port,
+        path: `${HOOK_API_PREFIX}/opencode`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          Authorization: `Bearer ${config.token}`,
+        },
+        timeout: 2000,
+      },
+      (res) => {
+        res.resume();
+        resolve();
+      },
+    );
+    req.on('error', () => resolve());
+    req.on('timeout', () => {
+      req.destroy();
+      resolve();
+    });
+    req.end(body);
+  });
+}
+
+function trackAgent(event: Record<string, unknown>): void {
+  const evt = event as Record<string, unknown>;
+  if (evt.type !== 'message.updated') return;
+  const info = (evt.properties as Record<string, unknown> | undefined)?.info as Record<string, unknown> | undefined;
+  if (info?.role !== 'user') return;
+  const agent = info.agent;
+  if (typeof agent !== 'string' || agent.length === 0) return;
+  const props = evt.properties as Record<string, unknown> | undefined;
+  const sessionID: unknown = info.sessionID ?? props?.sessionID ?? evt.sessionId;
+  if (typeof sessionID === 'string' && sessionID.length > 0) {
+    agentBySession.set(sessionID, agent);
+  }
+}
+
+function maybeInjectAgent(event: Record<string, unknown>): Record<string, unknown> {
+  const props = (event as Record<string, unknown>).properties as Record<string, unknown> | undefined;
+  if (!props) return event;
+  const sessionID = props.sessionID;
+  if (typeof sessionID !== 'string') return event;
+  const existingInfo = props.info as Record<string, unknown> | undefined;
+  if (existingInfo?.agent) return event;
+  const cachedAgent = agentBySession.get(sessionID);
+  if (!cachedAgent) return event;
+  return {
+    ...event,
+    properties: {
+      ...props,
+      info: {
+        ...(existingInfo || {}),
+        agent: cachedAgent,
+      },
+    },
+  };
+}
+
 export const pixelAgentsPlugin = async (): Promise<{
   event: (ctx: { event: Record<string, unknown> }) => Promise<void>;
 }> => {
@@ -46,33 +113,9 @@ export const pixelAgentsPlugin = async (): Promise<{
       const config = getServerConfig();
       if (!config) return;
 
-      const body = JSON.stringify(event);
-      return new Promise<void>((resolve) => {
-        const req = http.request(
-          {
-            hostname: '127.0.0.1',
-            port: config.port,
-            path: `${HOOK_API_PREFIX}/opencode`,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(body),
-              Authorization: `Bearer ${config.token}`,
-            },
-            timeout: 2000,
-          },
-          (res) => {
-            res.resume();
-            resolve();
-          },
-        );
-        req.on('error', () => resolve());
-        req.on('timeout', () => {
-          req.destroy();
-          resolve();
-        });
-        req.end(body);
-      });
+      trackAgent(event);
+      const modifiedEvent = maybeInjectAgent(event);
+      await forwardToServer(modifiedEvent, config);
     },
   };
 };

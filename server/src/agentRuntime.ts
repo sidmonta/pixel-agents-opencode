@@ -44,12 +44,12 @@ export interface RuntimeLifecycleCallbacks {
   onAgentRemoved?: (agentId: number, agent: AgentState) => void;
   /** Called when a teammate is removed. */
   onTeammateRemoved?: (teammateId: number, agent: AgentState, source: string) => void;
-  /** Called when an external session is detected (first tool event from a new session). */
-  onExternalSessionDetected?: (sessionId: string) => void;
+  /** Called when an external session is detected (first tool event from a new session).
+   *  `transcriptPath` is set for file-based providers (Claude), undefined for hook-only
+   *  providers (Opencode). `cwd` is the project working directory. */
+  onExternalSessionDetected?: (sessionId: string, transcriptPath?: string, cwd?: string) => void;
   /** Called when a session ends (exit/logout). */
   onSessionEnd?: (agentId: number) => void;
-  /** Called when the active agent changes within a session (Opencode agent switch). */
-  onAgentSwitch?: (sessionId: string, newAgentName: string) => void;
 }
 
 export class AgentRuntime {
@@ -115,21 +115,27 @@ export class AgentRuntime {
         if (!isTrackedProjectDir(projectDir) && !this.watchAllSessions.current) {
           return;
         }
-        adoptExternalSessionFromHook(
-          sessionId,
-          transcriptPath,
-          cwd,
-          this.knownJsonlFiles,
-          this.store.nextAgentId,
-          this.store,
-          this.fileWatchers,
-          this.pollingTimers,
-          this.waitingTimers,
-          this.permissionTimers,
-          () => this.store.persist(),
-          (agent) => this.registerAgent(agent.sessionId, agent.id),
-        );
-        this.lifecycleCallbacks.onExternalSessionDetected?.(sessionId);
+        if (transcriptPath) {
+          // File-based provider (Claude, Codex): adopt with JSONL file watching
+          adoptExternalSessionFromHook(
+            sessionId,
+            transcriptPath,
+            cwd,
+            this.knownJsonlFiles,
+            this.store.nextAgentId,
+            this.store,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+            () => this.store.persist(),
+            (agent) => this.registerAgent(agent.sessionId, agent.id),
+          );
+        }
+        // Hook-only providers (Opencode): agent creation is handled by the adapter
+        // (cli.ts) in the lifecycle callback below, so it can create one agent per
+        // agent name with compound session|agentName keys.
+        this.lifecycleCallbacks.onExternalSessionDetected?.(sessionId, transcriptPath, cwd);
       },
       onSessionClear: (agentId, newSessionId, newTranscriptPath) => {
         if (newTranscriptPath) {
@@ -193,9 +199,6 @@ export class AgentRuntime {
           this.removeAgent(agentId);
         }
       },
-      onAgentSwitch: (sessionId, newAgentName) => {
-        this.lifecycleCallbacks.onAgentSwitch?.(sessionId, newAgentName);
-      },
     });
   }
 
@@ -211,14 +214,16 @@ export class AgentRuntime {
     this.hookEventHandler.handleEvent(providerId, event as HookEvent);
   }
 
-  /** Register an agent with the hook event handler for session->agent mapping. */
-  registerAgent(sessionId: string, agentId: number): void {
-    this.hookEventHandler.registerAgent(sessionId, agentId);
+  /** Register an agent with the hook event handler for session->agent mapping.
+   *  If `agentName` is provided, uses a compound key for multi-agent sessions. */
+  registerAgent(sessionId: string, agentId: number, agentName?: string): void {
+    this.hookEventHandler.registerAgent(sessionId, agentId, agentName);
   }
 
-  /** Unregister an agent from the hook event handler. */
-  unregisterAgent(sessionId: string): void {
-    this.hookEventHandler.unregisterAgent(sessionId);
+  /** Unregister an agent from the hook event handler.
+   *  If `agentName` is provided, removes only that compound key mapping. */
+  unregisterAgent(sessionId: string, agentName?: string): void {
+    this.hookEventHandler.unregisterAgent(sessionId, agentName);
   }
 
   // ── Agent removal (shared cleanup) ──
@@ -418,7 +423,7 @@ export class AgentRuntime {
         /* ignore stat errors on restore */
       }
 
-      this.registerAgent(agent.sessionId, agent.id);
+      this.registerAgent(agent.sessionId, agent.id, agent.agentName);
 
       if (p.id > maxId) maxId = p.id;
       console.log(

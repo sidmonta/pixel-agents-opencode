@@ -51,10 +51,6 @@ interface SessionLifecycleCallbacks {
   onSessionResume?: (transcriptPath: string) => void;
   /** Called when a session ends (exit/logout). */
   onSessionEnd?: (agentId: number, reason: string) => void;
-  /** Called when the active agent changes within a session (Opencode agent switch).
-   *  The callback must synchronously update the session router so subsequent events
-   *  reach the correct agent. */
-  onAgentSwitch?: (sessionId: string, newAgentName: string) => void;
   /** Called when an Agent Teams teammate is detected via SubagentStart hook.
    *  Triggers scanning of the session's subagents/ directory for the teammate's JSONL. */
   onTeammateDetected?: (parentAgentId: number, sessionId: string, agentType: string) => void;
@@ -77,9 +73,9 @@ export class HookEventHandler {
    */
   private currentProvider: HookProvider | null = null;
 
-  /** Tracks the currently active agent name per session (e.g. "explore", "general").
-   *  Used to detect Opencode agent switches within the same session. */
-  private agentNamesBySession = new Map<string, string>();
+  /** Tracks last agentName per session (Opencode omits agentName in non-session.created events).
+   *  When an event arrives without agentName, the last known agent is used as routing fallback. */
+  private lastAgentForSession = new Map<string, string>();
 
   constructor(
     private agents: AgentStateStore,
@@ -129,9 +125,11 @@ export class HookEventHandler {
     this.lifecycleCallbacks = callbacks;
   }
 
-  /** Register an agent for hook event routing. Flushes any buffered events for this session. */
-  registerAgent(sessionId: string, agentId: number): void {
-    const flushed = this.sessionRouter.register(sessionId, agentId);
+  /** Register an agent for hook event routing. If `agentName` is provided, uses
+   *  a compound key `sessionId|agentName` for multi-agent sessions (Opencode).
+   *  Flushes any buffered events for this session. */
+  registerAgent(sessionId: string, agentId: number, agentName?: string): void {
+    const flushed = this.sessionRouter.register(sessionId, agentId, agentName);
     if (debug && flushed.length > 0)
       console.log(
         `[Pixel Agents] Hook: flushing ${flushed.length} buffered event(s) for session ${sessionId.slice(0, 8)}...`,
@@ -141,9 +139,10 @@ export class HookEventHandler {
     }
   }
 
-  /** Remove an agent's session mapping (called on agent removal/terminal close). */
-  unregisterAgent(sessionId: string): void {
-    this.sessionRouter.unregister(sessionId);
+  /** Remove an agent's session mapping (called on agent removal/terminal close).
+   *  If `agentName` is provided, removes only that compound key mapping. */
+  unregisterAgent(sessionId: string, agentName?: string): void {
+    this.sessionRouter.unregister(sessionId, agentName);
   }
 
   /**
@@ -172,8 +171,10 @@ export class HookEventHandler {
     if (!normalized) return; // unknown / uninteresting event -- silently drop
     const normEvent = normalized.event;
     // Provider-agnostic event name for logging: claude uses hook_event_name,
-// opencode uses type. Both are always valid strings if we got this far.
-const eventName = String(event.hook_event_name ?? event.type ?? '?');
+    // opencode uses type. Both are always valid strings if we got this far.
+    const eventName = String(event.hook_event_name ?? event.type ?? '?');
+    if (debug && normalized.agentName)
+      console.log(`[Pixel Agents] Hook: ${eventName} session=${normalized.sessionId.slice(0, 8)}... agentName=${normalized.agentName} kind=${normEvent.kind}`);
     // CI / e2e diagnostic: see agentStateStore.ts debugLogBroadcast comment.
     if (process.env['PIXEL_AGENTS_DEBUG_LOG']) {
       try {
@@ -192,23 +193,6 @@ const eventName = String(event.hook_event_name ?? event.type ?? '?');
       }
     }
 
-    // ── Agent switch detection ──────────────────────────────────────────
-    // Opencode reuses the same session across agent switches. The raw event
-    // carries properties.info.agent which tells us which agent is currently
-    // active. When it changes, we swap the sessionRouter mapping and mark
-    // the old agent idle.
-    if (normalized.agentName) {
-      const prev = this.agentNamesBySession.get(normalized.sessionId);
-      if (prev !== normalized.agentName) {
-        if (debug)
-          console.log(
-            `[Pixel Agents] Hook: Agent switch detected: ${prev ?? '(none)'} -> ${normalized.agentName}`,
-          );
-        this.agentNamesBySession.set(normalized.sessionId, normalized.agentName);
-        this.lifecycleCallbacks.onAgentSwitch?.(normalized.sessionId, normalized.agentName);
-      }
-    }
-
     // --- SessionStart: handle /clear for known agents, ignore unknown sessions ---
     // External session detection via SessionStart is deferred to Phase C.
     // For now, only use SessionStart for:
@@ -223,12 +207,15 @@ const eventName = String(event.hook_event_name ?? event.type ?? '?');
       if (debug && tracked)
         console.log(`[Pixel Agents] Hook: SessionStart(source=${source}, session=${sid}...)`);
 
-      // Check registered mapping
-      const existingAgentId = this.sessionRouter.resolve(normalized.sessionId);
+      // Check registered mapping (compound key when agentName available)
+      const existingAgentId = this.sessionRouter.resolve(normalized.sessionId, normalized.agentName);
       if (existingAgentId !== undefined) {
         const agent = this.agents.get(existingAgentId);
         if (agent) {
           agent.hookDelivered = true;
+        }
+        if (normalized.agentName) {
+          this.lastAgentForSession.set(normalized.sessionId, normalized.agentName);
         }
         if (debug)
           console.log(
@@ -239,8 +226,13 @@ const eventName = String(event.hook_event_name ?? event.type ?? '?');
       // Check auto-discovery (agent exists but not yet registered for hooks)
       for (const [id, agent] of this.agents) {
         if (agent.sessionId === normalized.sessionId) {
-          this.registerAgent(agent.sessionId, id);
+          const nameMatch = normalized.agentName ? agent.agentName === normalized.agentName : true;
+          if (!nameMatch) continue;
+          this.registerAgent(normalized.sessionId, id, normalized.agentName);
           agent.hookDelivered = true;
+          if (normalized.agentName) {
+            this.lastAgentForSession.set(normalized.sessionId, normalized.agentName);
+          }
           if (debug)
             console.log(
               `[Pixel Agents] Hook: Agent ${id} - SessionStart(source=${source}) auto-discovered`,
@@ -288,6 +280,9 @@ const eventName = String(event.hook_event_name ?? event.type ?? '?');
         });
       } else if (cwd) {
         // Hook-only provider (no transcript file) — create agent immediately
+        if (normalized.agentName) {
+          this.lastAgentForSession.set(normalized.sessionId, normalized.agentName);
+        }
         if (debug && tracked)
           console.log(
             `[Pixel Agents] Hook: SessionStart(source=${source}) -> creating hooks-only agent for session ${sid}...`,
@@ -331,15 +326,21 @@ const eventName = String(event.hook_event_name ?? event.type ?? '?');
       return;
     }
 
-    let agentId = this.sessionRouter.resolve(normalized.sessionId);
+    const agentName = normalized.agentName ?? this.lastAgentForSession.get(normalized.sessionId);
+    let agentId = this.sessionRouter.resolve(normalized.sessionId, agentName);
     if (agentId === undefined) {
       for (const [id, agent] of this.agents) {
         if (agent.sessionId === normalized.sessionId) {
-          this.registerAgent(agent.sessionId, id);
+          const nameMatch = agentName ? agent.agentName === agentName : true;
+          if (!nameMatch) continue;
+          this.registerAgent(normalized.sessionId, id, agentName);
           agentId = id;
           break;
         }
       }
+    }
+    if (normalized.agentName) {
+      this.lastAgentForSession.set(normalized.sessionId, normalized.agentName);
     }
     if (agentId === undefined) {
       const isPending = this.sessionRouter.hasPending(normalized.sessionId);

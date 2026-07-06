@@ -144,81 +144,71 @@ async function main(): Promise<void> {
     const sessionRooms = new Map<string, SessionRoomInfo>();
 
     runtime.setLifecycleCallbacks({
-      onExternalSessionDetected: (sessionId) => {
-        if (sessionRooms.has(sessionId)) return;
+      onExternalSessionDetected: (sessionId, transcriptPath, cwd) => {
+        console.log(`[Pixel Agents] cli: onExternalSessionDetected(sessionId=${sessionId.slice(0, 8)}..., transcriptPath=${!!transcriptPath}, cwd=${cwd?.slice(0, 30)})`);
+        if (sessionRooms.has(sessionId)) {
+          console.log(`[Pixel Agents] cli: sessionRooms GUARD HIT for ${sessionId.slice(0, 8)}...`);
+          return;
+        }
         try {
-          const agentNames = readOpencodeAgentNames();
-          const agentCount = Math.max(1, agentNames.length);
-          const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
-          if (!saved) return;
-          const { layout, roomInfo } = addSessionRoom(saved, sessionId, agentCount);
-          sessionRooms.set(sessionId, roomInfo);
-          store.broadcast({ type: 'layoutLoaded', layout });
+          if (transcriptPath) {
+            // File-based provider (Claude/Codex): one agent per session.
+            // Agent was already created by adoptExternalSessionFromHook.
+            const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
+            if (!saved) return;
+            const { layout, roomInfo } = addSessionRoom(saved, sessionId, 1);
+            sessionRooms.set(sessionId, roomInfo);
+            store.broadcast({ type: 'layoutLoaded', layout });
+          } else {
+            // Hook-only provider (Opencode): one agent per agent name,
+            // each with compound key `<sessionId|agentName>`.
+            const agentNames = readOpencodeAgentNames();
+            if (agentNames.length === 0) return;
+            const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
+            if (!saved) return;
+            const { layout, roomInfo } = addSessionRoom(saved, sessionId, agentNames.length);
+            sessionRooms.set(sessionId, roomInfo);
+            store.broadcast({ type: 'layoutLoaded', layout });
 
-          // Assign names to all agents in this session (real + passive).
-          // The real agent (id=N) was already created by adoptExternalSessionFromHook.
-          const allSessionAgents = [...store.values()]
-            .filter((a) => a.sessionId === sessionId)
-            .sort((a, b) => a.id - b.id);
-          // Real agent is always first (created first by adoptExternalSessionFromHook)
-
-          // Create passive agents for any remaining agent names beyond the real agent
-          for (let i = 1; i < agentCount; i++) {
-            const passiveId = store.nextAgentId.current++;
-            const agentName = agentNames[i] ?? `agent-${i}`;
-            const realAgent = allSessionAgents[0];
-            const newSessionId = `realAgent.id[${agentName}]`;
-            const passiveAgent: AgentState = {
-              id: passiveId,
-              sessionId: newSessionId,
-              terminalRef: undefined,
-              isExternal: true,
-              projectDir: realAgent?.projectDir ?? '',
-              jsonlFile: '',
-              fileOffset: 0,
-              lineBuffer: '',
-              activeToolIds: new Set(),
-              activeToolStatuses: new Map(),
-              activeToolNames: new Map(),
-              activeSubagentToolIds: new Map(),
-              activeSubagentToolNames: new Map(),
-              backgroundAgentToolIds: new Set(),
-              isWaiting: false,
-              permissionSent: false,
-              hadToolsInTurn: false,
-              hookDelivered: false,
-              hooksOnly: true,
-              lastDataAt: Date.now(),
-              linesProcessed: 0,
-              seenUnknownRecordTypes: new Set(),
-              folderName: realAgent?.folderName,
-              inputTokens: 0,
-              outputTokens: 0,
-              agentName: agentNames[i] ?? `agent-${i}`,
-              providerId: 'opencode',
-            };
-            store.set(passiveId, passiveAgent);
-            allSessionAgents.push(passiveAgent);
-          }
-
-          // Set agentName on the real agent (first in sorted order)
-          if (allSessionAgents.length > 0 && agentNames.length > 0) {
-            allSessionAgents[0]!.agentName = agentNames[0]!;
-          }
-
-          store.persist();
-
-          // Broadcast agentTeamInfo so the webview shows agent names in overlays
-          for (let i = 0; i < allSessionAgents.length; i++) {
-            const a = allSessionAgents[i];
-            const name = agentNames[i];
-            if (name) {
-              store.broadcast({
-                type: 'agentTeamInfo',
-                id: a.id,
-                agentName: name,
-              });
+            console.log(`[Pixel Agents] cli: Creating ${agentNames.length} agents for session ${sessionId.slice(0, 8)}... names=[${agentNames.join(',')}]`);
+            for (let i = 0; i < agentNames.length; i++) {
+              const agentId = store.nextAgentId.current++;
+              const agentName = agentNames[i]!;
+              console.log(`[Pixel Agents] cli:   agentId=${agentId} agentName=${agentName}`);
+              const agent: AgentState = {
+                id: agentId,
+                sessionId,
+                terminalRef: undefined,
+                isExternal: true,
+                projectDir: cwd ?? process.cwd(),
+                jsonlFile: '',
+                fileOffset: 0,
+                lineBuffer: '',
+                activeToolIds: new Set(),
+                activeToolStatuses: new Map(),
+                activeToolNames: new Map(),
+                activeSubagentToolIds: new Map(),
+                activeSubagentToolNames: new Map(),
+                backgroundAgentToolIds: new Set(),
+                isWaiting: false,
+                permissionSent: false,
+                hadToolsInTurn: false,
+                hookDelivered: true,
+                hooksOnly: true,
+                lastDataAt: Date.now(),
+                linesProcessed: 0,
+                seenUnknownRecordTypes: new Set(),
+                folderName: cwd ? path.basename(cwd) : undefined,
+                inputTokens: 0,
+                outputTokens: 0,
+                agentName,
+                providerId: 'opencode',
+              };
+              store.set(agentId, agent);
+              runtime.registerAgent(sessionId, agentId, agentName);
+              store.broadcast({ type: 'agentTeamInfo', id: agentId, agentName });
             }
+            store.persist();
           }
         } catch (err) {
           console.error('[Pixel Agents] Failed to add session room:', err);
@@ -237,64 +227,18 @@ async function main(): Promise<void> {
           sessionRooms.delete(agent.sessionId);
           store.broadcast({ type: 'layoutLoaded', layout });
 
-          // Remove all passive agents (hooksOnly) with this sessionId
-          for (const [id, a] of store) {
-            if (a.sessionId === agent.sessionId && id !== agentId && a.hooksOnly) {
-              runtime.removeAgent(id);
-            }
+          // Remove ALL agents for this session (supports compound-key multi-agent)
+          const agentIdsToRemove = [...store.values()]
+            .filter((a) => a.sessionId === agent.sessionId && a.id !== agentId)
+            .map((a) => a.id);
+          for (const id of agentIdsToRemove) {
+            runtime.removeAgent(id);
           }
         } catch (err) {
           console.error('[Pixel Agents] Failed to remove session room:', err);
         }
       },
-      onAgentSwitch: (sessionId, newAgentName) => {
-        // Find agents in this session
-        const agentInfo = `${sessionId}[${newAgentName}]`;
-        const sessionAgents = [...store.values()]
-          .filter((a) => a.sessionId === agentInfo)
-          .sort((a, b) => a.id - b.id);
-        if (sessionAgents.length < 2) return; // nothing to switch
 
-        // Find the current active agent (not hooksOnly) and the target agent
-        let currentActiveId: number | undefined;
-        let targetId: number | undefined;
-
-        for (const a of sessionAgents) {
-          if (!a.hooksOnly && !a.leadAgentId) {
-            currentActiveId = a.id;
-          }
-          if (a.agentName === newAgentName) {
-            targetId = a.id;
-          }
-        }
-
-        if (targetId === undefined || currentActiveId === undefined) return;
-        if (targetId === currentActiveId) return; // already active
-
-        console.log(
-          `[Pixel Agents] Agent switch: ${currentActiveId} -> ${targetId} (${newAgentName})`,
-        );
-
-        // Mark the old agent as passive
-        const oldAgent = store.get(currentActiveId);
-        if (oldAgent) {
-          oldAgent.hooksOnly = true;
-          // Broadcast idle for the old agent so it stops showing tool activity
-          store.broadcast({ type: 'agentToolsClear', id: currentActiveId });
-          store.broadcast({ type: 'agentStatus', id: currentActiveId, status: 'waiting' });
-        }
-
-        // Mark the new agent as active
-        const newAgent = store.get(targetId);
-        if (newAgent) {
-          newAgent.hooksOnly = false;
-        }
-
-        // Update session router so incoming events route to the new agent
-        runtime.registerAgent(sessionId, targetId);
-
-        store.broadcast({ type: 'agentSwitched', id: targetId, agentName: newAgentName });
-      },
     });
 
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents

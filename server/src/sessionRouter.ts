@@ -24,29 +24,65 @@ export interface BufferedEvent {
  */
 export class SessionRouter {
   private sessionToAgentId = new Map<string, number>();
+  /** Tracks all registered keys for a session — both raw sessionId and compound keys.
+   *  Enables clean bulk cleanup on `unregister(sessionId)`. */
+  private sessionKeys = new Map<string, Set<string>>();
   private pendingSessions = new Map<string, PendingExternalSession>();
   private buffer: BufferedEvent[] = [];
   private bufferTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── Session → Agent mapping ────────────────────────────────────────
 
-  /** Register a session→agent mapping. Returns any buffered events for this
-   *  session so the caller can re-dispatch them. */
-  register(sessionId: string, agentId: number): BufferedEvent[] {
-    this.sessionToAgentId.set(sessionId, agentId);
+  /** Register a session→agent mapping. Optionally uses a compound key
+   *  `sessionId|agentName` when `agentName` is provided (Opencode multi-agent sessions).
+   *  Returns any buffered events for this session so the caller can re-dispatch them. */
+  register(sessionId: string, agentId: number, agentName?: string): BufferedEvent[] {
+    const key = agentName ? `${sessionId}|${agentName}` : sessionId;
+    this.sessionToAgentId.set(key, agentId);
+    let keys = this.sessionKeys.get(sessionId);
+    if (!keys) {
+      keys = new Set();
+      this.sessionKeys.set(sessionId, keys);
+    }
+    keys.add(key);
     return this.flushBuffered(sessionId);
   }
 
-  unregister(sessionId: string): void {
-    this.sessionToAgentId.delete(sessionId);
+  /** Remove the session→agent mapping for a specific compound key, or all keys
+   *  for the session if no agentName is provided. */
+  unregister(sessionId: string, agentName?: string): void {
+    if (agentName) {
+      const key = `${sessionId}|${agentName}`;
+      this.sessionToAgentId.delete(key);
+      const keys = this.sessionKeys.get(sessionId);
+      if (keys) keys.delete(key);
+    } else {
+      const keys = this.sessionKeys.get(sessionId);
+      if (keys) {
+        for (const key of keys) {
+          this.sessionToAgentId.delete(key);
+        }
+      }
+      this.sessionKeys.delete(sessionId);
+    }
   }
 
-  resolve(sessionId: string): number | undefined {
+  resolve(sessionId: string, agentName?: string): number | undefined {
+    if (agentName) {
+      return this.sessionToAgentId.get(`${sessionId}|${agentName}`);
+    }
     return this.sessionToAgentId.get(sessionId);
   }
 
   hasSession(sessionId: string): boolean {
-    return this.sessionToAgentId.has(sessionId);
+    if (this.sessionToAgentId.has(sessionId)) return true;
+    const keys = this.sessionKeys.get(sessionId);
+    return keys !== undefined && keys.size > 0;
+  }
+
+  /** Get all registered keys for a session. */
+  getKeysForSession(sessionId: string): Set<string> {
+    return this.sessionKeys.get(sessionId) ?? new Set();
   }
 
   // ── Pending external sessions ──────────────────────────────────────
@@ -98,6 +134,7 @@ export class SessionRouter {
       this.bufferTimer = null;
     }
     this.sessionToAgentId.clear();
+    this.sessionKeys.clear();
     this.buffer = [];
     this.pendingSessions.clear();
   }
