@@ -70,6 +70,9 @@ Options:
 
 const OPENCODE_CONFIG_PATH = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
 
+/** Agenti di sistema nascosti che non devono apparire nell'ufficio. */
+const HIDDEN_SYSTEM_AGENTS = new Set(['compaction', 'title', 'summary']);
+
 /** Read agent names from `opencode agent list`. Falls back to config file keys. */
 function readOpencodeAgentNames(): string[] {
   try {
@@ -80,7 +83,10 @@ function readOpencodeAgentNames(): string[] {
       // Lines like: "explore (subagent)" or "plan (primary)"
       const match = trimmed.match(/^(\S+)\s+\(/);
       if (match) {
-        names.push(match[1]!);
+        const name = match[1]!;
+        if (!HIDDEN_SYSTEM_AGENTS.has(name)) {
+          names.push(name);
+        }
       }
     }
     if (names.length > 0) return names;
@@ -93,7 +99,7 @@ function readOpencodeAgentNames(): string[] {
     const config = JSON.parse(raw);
     const agents = config.agent;
     if (agents && typeof agents === 'object') {
-      return Object.keys(agents);
+      return Object.keys(agents).filter((k) => !HIDDEN_SYSTEM_AGENTS.has(k));
     }
   } catch {
     // Config not found or invalid
