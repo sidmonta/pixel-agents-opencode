@@ -130,23 +130,51 @@ export function ToolOverlay({
         const isHovered = hoveredId === id;
         const isSub = ch.isSubagent;
 
-        // Only show for hovered or selected agents (unless always-show is on)
-        if (!alwaysShowOverlay && !isSelected && !isHovered) return null;
-
         // Position above character
         const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
         const screenX = (deviceOffsetX + ch.x * zoom) / dpr;
         const screenY =
           (deviceOffsetY + (ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET) * zoom) / dpr;
 
-        // A "Done" agent (finished turn: waiting bubble without awaitingInput)
-        // shows ONLY its floating green checkmark bubble, never the label panel
-        // (the panel would cover the bubble). Render an empty positioned marker
-        // so overlay counts stay stable and hover/select can still bring the
-        // panel back. When always-show is off, the early return above already
-        // keeps the panel hidden for idle agents.
-        const isDone = ch.bubbleType === 'waiting' && !ch.waitingAwaitingInput;
-        if (isDone && !isSelected && !isHovered) {
+        const showPanel = alwaysShowOverlay || isSelected || isHovered;
+
+        // Name label always visible above the character (hidden when detailed
+        // panel shows — it already contains the name).
+        if (!showPanel) {
+          const displayName = isSub
+            ? subagentCharacters.find((s) => s.id === id)?.label ?? null
+            : ch.agentName ?? null;
+
+          if (displayName) {
+            return (
+              <div
+                key={id}
+                className="absolute flex flex-col items-center -translate-x-1/2"
+                style={{
+                  left: screenX,
+                  top: screenY + 4,
+                  pointerEvents: 'none',
+                  zIndex: 40,
+                }}
+                data-testid="agent-overlay"
+                data-agent-id={id}
+              >
+                <span
+                  className="text-text/80"
+                  style={{
+                    fontSize: '18pt',
+                    textShadow: '0 0 15px var(--color-bg), 0 0 12px var(--color-bg)',
+                    lineHeight: 1,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {displayName}
+                </span>
+              </div>
+            );
+          }
+
+          // No name available — empty positioned marker keeps overlay counts stable
           return (
             <div
               key={id}
@@ -157,6 +185,8 @@ export function ToolOverlay({
             />
           );
         }
+
+        // ── Detailed panel (selected / hovered / always-show) ──
 
         // Get activity text
         const hasWaitingBubble = ch.bubbleType === 'waiting';

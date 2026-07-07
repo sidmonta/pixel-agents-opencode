@@ -157,12 +157,21 @@ async function main(): Promise<void> {
           return;
         }
         try {
+          if (!assetCache.defaultLayout) return;
+          const existingSessionCount = new Set([...store.values()].map((agent) => agent.sessionId)).size;
           if (transcriptPath) {
             // File-based provider (Claude/Codex): one agent per session.
             // Agent was already created by adoptExternalSessionFromHook.
             const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
             if (!saved) return;
-            const { layout, roomInfo } = addSessionRoom(saved, sessionId, 1);
+            if (existingSessionCount <= 1) return;
+            const { layout, roomInfo } = addSessionRoom(
+              saved,
+              sessionId,
+              assetCache.defaultLayout,
+              sessionRooms.size,
+            );
+            writeLayoutToFile(layout);
             sessionRooms.set(sessionId, roomInfo);
             store.broadcast({ type: 'layoutLoaded', layout });
           } else if (agentName) {
@@ -170,9 +179,19 @@ async function main(): Promise<void> {
             // create exactly one agent for this session (no duplicates).
             const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
             if (!saved) return;
-            const { layout, roomInfo } = addSessionRoom(saved, sessionId, 1);
-            sessionRooms.set(sessionId, roomInfo);
-            store.broadcast({ type: 'layoutLoaded', layout });
+            if (existingSessionCount === 0) {
+              console.log('[Pixel Agents] cli: first session uses bundled base room');
+            } else {
+              const { layout, roomInfo } = addSessionRoom(
+                saved,
+                sessionId,
+                assetCache.defaultLayout,
+                sessionRooms.size,
+              );
+              writeLayoutToFile(layout);
+              sessionRooms.set(sessionId, roomInfo);
+              store.broadcast({ type: 'layoutLoaded', layout });
+            }
 
             console.log(`[Pixel Agents] cli: Creating agent ${agentName} for session ${sessionId.slice(0, 8)}...`);
             const agentId = store.nextAgentId.current++;
@@ -223,9 +242,19 @@ async function main(): Promise<void> {
             if (agentNames.length === 0) return;
             const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
             if (!saved) return;
-            const { layout, roomInfo } = addSessionRoom(saved, sessionId, agentNames.length);
-            sessionRooms.set(sessionId, roomInfo);
-            store.broadcast({ type: 'layoutLoaded', layout });
+            if (existingSessionCount === 0) {
+              console.log('[Pixel Agents] cli: first session uses bundled base room');
+            } else {
+              const { layout, roomInfo } = addSessionRoom(
+                saved,
+                sessionId,
+                assetCache.defaultLayout,
+                sessionRooms.size,
+              );
+              writeLayoutToFile(layout);
+              sessionRooms.set(sessionId, roomInfo);
+              store.broadcast({ type: 'layoutLoaded', layout });
+            }
 
             console.log(`[Pixel Agents] cli: Creating ${agentNames.length} agents for session ${sessionId.slice(0, 8)}... names=[${agentNames.join(',')}]`);
             for (let i = 0; i < agentNames.length; i++) {

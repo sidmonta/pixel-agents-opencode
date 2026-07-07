@@ -32,13 +32,20 @@ import {
 import { readBacklogTasks } from '../../server/src/backlogReader.js';
 import { readConfig, writeConfig } from '../../server/src/configPersistence.js';
 import { setTerminalAdapter } from '../../server/src/fileWatcher.js';
+import type { SessionRoomInfo } from '../../server/src/layoutBuilder.js';
+import { addSessionRoom, removeSessionRoom } from '../../server/src/layoutBuilder.js';
 import type { LayoutWatcher } from '../../server/src/layoutPersistence.js';
 import {
   readLayoutFromFile,
   watchLayoutFile,
   writeLayoutToFile,
 } from '../../server/src/layoutPersistence.js';
-import { claudeProvider, copyHookScript, copyPluginScript,opencodeProvider } from '../../server/src/providers/index.js';
+import {
+  claudeProvider,
+  copyHookScript,
+  copyPluginScript,
+  opencodeProvider,
+} from '../../server/src/providers/index.js';
 import { PixelAgentsServer } from '../../server/src/server.js';
 import {
   getProjectDirPath,
@@ -92,6 +99,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   // Cross-window layout sync
   layoutWatcher: LayoutWatcher | null = null;
+  private readonly sessionRooms = new Map<string, SessionRoomInfo>();
 
   // Pixel Agents Server (hook event reception)
   private pixelAgentsServer: PixelAgentsServer | null = null;
@@ -131,6 +139,23 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     // Create shared runtime (owns timer Maps, scanners, hook handler, dismissal tracker)
     this.runtime = new AgentRuntime(this.store, [claudeProvider, opencodeProvider]);
+    this.runtime.setLifecycleCallbacks({
+      onAgentRemoved: (_agentId, agent) => {
+        const roomInfo = this.sessionRooms.get(agent.sessionId);
+        if (!roomInfo) return;
+        const hasOtherAgentsInSession = [...this.store.values()].some(
+          (candidate) => candidate.id !== agent.id && candidate.sessionId === agent.sessionId,
+        );
+        if (hasOtherAgentsInSession) return;
+        const savedLayout = readLayoutFromFile();
+        if (!savedLayout) return;
+        this.layoutWatcher?.markOwnWrite();
+        const layout = removeSessionRoom(savedLayout, roomInfo);
+        writeLayoutToFile(layout);
+        this.sessionRooms.delete(agent.sessionId);
+        this.sendOrBuffer({ type: 'layoutLoaded', layout });
+      },
+    });
 
     this.initServer();
   }
@@ -221,6 +246,28 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // Register newly created agent(s) with hook handler
         for (const [id, agent] of this.store) {
           if (!prevAgentIds.has(id)) {
+            const existingSessionCount = new Set(
+              [...this.store.values()]
+                .filter((candidate) => candidate.id !== id)
+                .map((candidate) => candidate.sessionId),
+            ).size;
+            if (
+              existingSessionCount > 0 &&
+              !this.sessionRooms.has(agent.sessionId) &&
+              this.defaultLayout
+            ) {
+              const savedLayout = readLayoutFromFile() ?? this.defaultLayout;
+              const { layout, roomInfo } = addSessionRoom(
+                savedLayout,
+                agent.sessionId,
+                this.defaultLayout,
+                this.sessionRooms.size,
+              );
+              this.layoutWatcher?.markOwnWrite();
+              writeLayoutToFile(layout);
+              this.sessionRooms.set(agent.sessionId, roomInfo);
+              this.sendOrBuffer({ type: 'layoutLoaded', layout });
+            }
             this.runtime.registerAgent(agent.sessionId, id);
           }
         }

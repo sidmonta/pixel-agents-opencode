@@ -113,23 +113,9 @@ export function buildAssetIndex(assetsDir: string) {
       });
   }
 
-  let defaultLayout: string | null = null;
-  let bestRev = 0;
-  if (fs.existsSync(assetsDir)) {
-    for (const f of fs.readdirSync(assetsDir)) {
-      const m = /^default-layout-(\d+)\.json$/.exec(f);
-      if (m) {
-        const rev = parseInt(m[1], 10);
-        if (rev > bestRev) {
-          bestRev = rev;
-          defaultLayout = f;
-        }
-      }
-    }
-    if (!defaultLayout && fs.existsSync(path.join(assetsDir, 'default-layout.json'))) {
-      defaultLayout = 'default-layout.json';
-    }
-  }
+  const defaultLayout = fs.existsSync(path.join(assetsDir, 'layout-base.json'))
+    ? 'layout-base.json'
+    : null;
 
   return {
     floors: listSorted('floors', /^floor_\d+\.png$/i),
