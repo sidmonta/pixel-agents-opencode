@@ -34,7 +34,8 @@ export type ServerMessage =
   | SettingsLoaded
   | ExternalAssetDirectoriesUpdated
   | WorkspaceFolders
-  | AgentDiagnostics;
+  | AgentDiagnostics
+  | BacklogDataResponse;
 
 export type ClientMessage =
   | WebviewReady
@@ -54,7 +55,8 @@ export type ClientMessage =
   | OpenSessionsFolder
   | AddExternalAssetDirectory
   | RemoveExternalAssetDirectory
-  | RequestDiagnostics;
+  | RequestDiagnostics
+  | RequestBacklogData;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -279,6 +281,21 @@ export interface AgentDiagnostics {
   agents: Record<string, any>[];
 }
 
+export interface BacklogDataResponse {
+  type: 'backlogDataResponse';
+  tasks: BacklogTask[];
+}
+
+export interface BacklogTask {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string[];
+  labels: string[];
+  priority?: string;
+  milestone?: string;
+}
+
 export interface WebviewReady {
   type: 'webviewReady';
 }
@@ -367,4 +384,9 @@ export interface RemoveExternalAssetDirectory {
 
 export interface RequestDiagnostics {
   type: 'requestDiagnostics';
+}
+
+export interface RequestBacklogData {
+  type: 'requestBacklogData';
+  projectPath?: string;
 }

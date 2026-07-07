@@ -34,6 +34,8 @@ export interface HttpServerOptions {
   onHookEvent?: (providerId: string, event: Record<string, unknown>) => void;
   /** Invoked when setHooksEnabled is toggled via WebSocket. Standalone installs/uninstalls hooks here. */
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
+  /** Project root directory for resolving backlog/ path. */
+  projectRoot?: string;
 }
 
 /** Result of createHttpServer(). */
@@ -196,6 +198,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
           runtime: options.runtime,
           cache: options.assetCache ?? null,
           onSetHooksEnabled: options.onSetHooksEnabled,
+          projectRoot: options.projectRoot,
         });
       } catch {
         // Malformed JSON, ignore

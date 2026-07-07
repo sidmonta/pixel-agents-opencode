@@ -200,6 +200,8 @@ export interface Character {
   leadAgentId?: number;
   /** True when lead spawns teammates via tmux (run_in_background Agent calls) */
   teamUsesTmux?: boolean;
+  /** Parent agent ID for opencode delegation hierarchy (agent A → agent B) */
+  hierarchyParentId?: number;
   /** Cumulative input tokens consumed */
   inputTokens: number;
   /** Cumulative output tokens consumed */

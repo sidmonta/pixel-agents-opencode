@@ -1,8 +1,12 @@
 // webview-ui/src/office/components/officeCanvasCursor.ts
 //
 // Pure cursor resolver for the OfficeCanvas in normal (non-edit) mode.
-// Decision cascade: character hit → pet hit → seat-reassign hit → default.
+// Decision cascade: character hit → pet hit → interactive furniture → seat-reassign hit → default.
 // All callers pass closures over the OfficeState — no direct coupling.
+
+export function isInteractiveFurniture(type: string): boolean {
+  return type === 'WHITEBOARD';
+}
 
 export interface OfficeCursorTile {
   col: number;
@@ -22,6 +26,7 @@ export interface OfficeCursorState {
   petId: string | null;
   selectedAgentId: number | null;
   tile: OfficeCursorTile | null;
+  hasInteractiveFurniture: boolean;
   getSeatAtTile: (col: number, row: number) => string | null;
   getSeat: (seatId: string) => OfficeCursorSeat | undefined;
   getCharacter: (id: number) => OfficeCursorCharacter | undefined;
@@ -37,6 +42,11 @@ export function computeNormalModeCursor(state: OfficeCursorState): OfficeCursor 
 
   // 2. Pet hit → pointer. Explicit !== null so empty-string id still counts as a hit.
   if (state.petId !== null) {
+    return 'pointer';
+  }
+
+  // 2b. Interactive furniture (whiteboard, etc.) → pointer
+  if (state.hasInteractiveFurniture) {
     return 'pointer';
   }
 

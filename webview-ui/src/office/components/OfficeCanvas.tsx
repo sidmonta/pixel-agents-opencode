@@ -23,7 +23,7 @@ import type {
 import { renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
 import { EditTool, TILE_SIZE } from '../types.js';
-import { computeNormalModeCursor } from './officeCanvasCursor.js';
+import { computeNormalModeCursor, isInteractiveFurniture } from './officeCanvasCursor.js';
 
 interface OfficeCanvasProps {
   officeState: OfficeState;
@@ -36,6 +36,7 @@ interface OfficeCanvasProps {
   onDeleteSelected: () => void;
   onRotateSelected: () => void;
   onDragMove: (uid: string, newCol: number, newRow: number) => void;
+  onFurnitureClick?: (type: string, uid: string) => void;
   editorTick: number;
   zoom: number;
   onZoomChange: (zoom: number) => void;
@@ -53,6 +54,7 @@ export function OfficeCanvas({
   onDeleteSelected,
   onRotateSelected,
   onDragMove,
+  onFurnitureClick,
   editorTick: _editorTick,
   zoom,
   onZoomChange,
@@ -463,6 +465,24 @@ export function OfficeCanvas({
       const petId = hitId === null ? officeState.getPetAt(pos.worldX, pos.worldY) : null;
       const tile = screenToTile(e.clientX, e.clientY);
       officeState.hoveredTile = tile;
+      // Check for interactive furniture at hovered tile
+      let hasInteractiveFurniture = false;
+      if (tile) {
+        const layout = officeState.getLayout();
+        const hitFurniture = layout.furniture.find((f) => {
+          const entry = getCatalogEntry(f.type);
+          if (!entry) return false;
+          return (
+            tile.col >= f.col &&
+            tile.col < f.col + entry.footprintW &&
+            tile.row >= f.row &&
+            tile.row < f.row + entry.footprintH
+          );
+        });
+        if (hitFurniture && isInteractiveFurniture(hitFurniture.type)) {
+          hasInteractiveFurniture = true;
+        }
+      }
       const canvas = canvasRef.current;
       if (canvas) {
         canvas.style.cursor = computeNormalModeCursor({
@@ -470,6 +490,7 @@ export function OfficeCanvas({
           petId,
           selectedAgentId: officeState.selectedAgentId,
           tile,
+          hasInteractiveFurniture,
           getSeatAtTile: (col, row) => officeState.getSeatAtTile(col, row),
           getSeat: (seatId) => officeState.seats.get(seatId),
           getCharacter: (id) => officeState.characters.get(id),
@@ -696,6 +717,26 @@ export function OfficeCanvas({
         return;
       }
 
+      // Interactive furniture hit
+      const furnTile = screenToTile(e.clientX, e.clientY);
+      if (furnTile) {
+        const layout = officeState.getLayout();
+        const hitFurniture = layout.furniture.find((f) => {
+          const entry = getCatalogEntry(f.type);
+          if (!entry) return false;
+          return (
+            furnTile.col >= f.col &&
+            furnTile.col < f.col + entry.footprintW &&
+            furnTile.row >= f.row &&
+            furnTile.row < f.row + entry.footprintH
+          );
+        });
+        if (hitFurniture && isInteractiveFurniture(hitFurniture.type) && onFurnitureClick) {
+          onFurnitureClick(hitFurniture.type, hitFurniture.uid);
+          return;
+        }
+      }
+
       // No agent hit — check seat click while agent is selected
       if (officeState.selectedAgentId !== null) {
         const selectedCh = officeState.characters.get(officeState.selectedAgentId);
@@ -743,7 +784,7 @@ export function OfficeCanvas({
         officeState.cameraFollowId = null;
       }
     },
-    [officeState, onClick, screenToWorld, screenToTile, isEditMode],
+    [officeState, onClick, onFurnitureClick, screenToWorld, screenToTile, isEditMode],
   );
 
   const handleMouseLeave = useCallback(() => {

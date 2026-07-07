@@ -2,10 +2,11 @@
  * Unit tests for the pure `computeNormalModeCursor` decision cascade.
  *
  * Decision order (per officeCanvasCursor.ts):
- *   1. character hit (hitId !== null)          → pointer
- *   2. pet hit (petId !== null)                → pointer
- *   3. selected agent + seat-reassign hover    → pointer
- *   4. otherwise                               → default
+ *   1. character hit (hitId !== null)              → pointer
+ *   2. pet hit (petId !== null)                    → pointer
+ *   2b. interactive furniture (hasInteractiveFurniture) → pointer
+ *   3. selected agent + seat-reassign hover        → pointer
+ *   4. otherwise                                   → default
  *
  * Run with: npm test
  */
@@ -29,6 +30,7 @@ function buildState(overrides: Partial<OfficeCursorState> = {}): OfficeCursorSta
     petId: null,
     selectedAgentId: null,
     tile: null,
+    hasInteractiveFurniture: false,
     getSeatAtTile: () => null,
     getSeat: () => undefined,
     getCharacter: () => undefined,

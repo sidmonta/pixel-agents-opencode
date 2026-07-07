@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -16,6 +16,16 @@ import type { OfficeLayout, ToolActivity } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
 import { isE2E } from '../runtime.js';
 import { transport } from '../transport/index.js';
+
+export interface BacklogTask {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string[];
+  labels: string[];
+  priority?: string;
+  milestone?: string;
+}
 
 export interface SubagentCharacter {
   id: number;
@@ -72,6 +82,8 @@ interface ExtensionMessageState {
   hooksEnabled: boolean;
   setHooksEnabled: (v: boolean) => void;
   hooksInfoShown: boolean;
+  backlogTasks: BacklogTask[];
+  requestBacklogData: (projectPath?: string) => void;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -109,6 +121,11 @@ export function useExtensionMessages(
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
+  const [backlogTasks, setBacklogTasks] = useState<BacklogTask[]>([]);
+
+  const requestBacklogData = useCallback((projectPath?: string) => {
+    transport.send({ type: 'requestBacklogData', ...(projectPath ? { projectPath } : {}) });
+  }, []);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -562,6 +579,10 @@ export function useExtensionMessages(
         } catch (err) {
           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err);
         }
+      } else if (msg.type === 'agentParentInfo') {
+        const id = msg.id as number;
+        const parentAgentId = msg.parentAgentId as number;
+        os.setHierarchyParent(id, parentAgentId);
       } else if (msg.type === 'agentTeamInfo') {
         const id = msg.id as number;
         os.setTeamInfo(
@@ -575,6 +596,8 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentTokenUsage') {
         const id = msg.id as number;
         os.setAgentTokens(id, msg.inputTokens as number, msg.outputTokens as number);
+      } else if (msg.type === 'backlogDataResponse') {
+        setBacklogTasks(msg.tasks as BacklogTask[]);
       }
     };
     const unsubscribe = transport.onMessage(handler);
@@ -603,5 +626,7 @@ export function useExtensionMessages(
     hooksEnabled,
     setHooksEnabled,
     hooksInfoShown,
+    backlogTasks,
+    requestBacklogData,
   };
 }

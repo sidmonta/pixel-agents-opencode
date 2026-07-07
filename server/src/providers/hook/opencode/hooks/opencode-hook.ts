@@ -40,6 +40,36 @@ function getServerConfig(): ServerConfig | null {
 
 const agentBySession = new Map<string, string>();
 
+// ── SIGINT / process-exit handler ──
+
+let shutdownSetup = false;
+function setupShutdown(): void {
+  if (shutdownSetup) return;
+  shutdownSetup = true;
+  const handler = (): void => {
+    const config = getServerConfig();
+    if (!config || agentBySession.size === 0) return;
+    console.log('[Pixel Agents] Sending session end to server...');
+    const promises: Promise<void>[] = [];
+    for (const [sessionId, agentName] of agentBySession) {
+      promises.push(
+        forwardToServer(
+          {
+            type: 'session.deleted',
+            sessionId,
+            properties: { sessionID: sessionId, info: { agent: agentName } },
+            data: { reason: 'process.exit' },
+          },
+          config,
+        ),
+      );
+    }
+    Promise.all(promises).catch(() => {});
+  };
+  process.on('SIGINT', handler);
+  process.on('SIGTERM', handler);
+}
+
 function forwardToServer(event: Record<string, unknown>, config: ServerConfig): Promise<void> {
   const body = JSON.stringify(event);
   return new Promise<void>((resolve) => {
@@ -72,15 +102,29 @@ function forwardToServer(event: Record<string, unknown>, config: ServerConfig): 
 
 function trackAgent(event: Record<string, unknown>): void {
   const evt = event as Record<string, unknown>;
-  if (evt.type !== 'message.updated') return;
-  const info = (evt.properties as Record<string, unknown> | undefined)?.info as Record<string, unknown> | undefined;
-  if (info?.role !== 'user') return;
-  const agent = info.agent;
-  if (typeof agent !== 'string' || agent.length === 0) return;
+  const type = evt.type;
   const props = evt.properties as Record<string, unknown> | undefined;
-  const sessionID: unknown = info.sessionID ?? props?.sessionID ?? evt.sessionId;
+  if (!props) return;
+
+  let sessionID: unknown;
+  let agentName: unknown;
+
+  if (type === 'session.created' || type === 'session.updated') {
+    const info = props.info as Record<string, unknown> | undefined;
+    agentName = info?.agent;
+    sessionID = props.sessionID ?? evt.sessionId;
+  } else if (type === 'message.updated') {
+    const info = props.info as Record<string, unknown> | undefined;
+    if (info?.role !== 'user') return;
+    agentName = info.agent;
+    sessionID = info.sessionID ?? props.sessionID ?? evt.sessionId;
+  } else {
+    return;
+  }
+
+  if (typeof agentName !== 'string' || agentName.length === 0) return;
   if (typeof sessionID === 'string' && sessionID.length > 0) {
-    agentBySession.set(sessionID, agent);
+    agentBySession.set(sessionID, agentName);
   }
 }
 
@@ -113,6 +157,7 @@ export const pixelAgentsPlugin = async (): Promise<{
       const config = getServerConfig();
       if (!config) return;
 
+      setupShutdown();
       trackAgent(event);
       const modifiedEvent = maybeInjectAgent(event);
       await forwardToServer(modifiedEvent, config);

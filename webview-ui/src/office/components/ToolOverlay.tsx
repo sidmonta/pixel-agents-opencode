@@ -247,6 +247,19 @@ export function ToolOverlay({
                 >
                   {activityText}
                 </span>
+                {ch.hierarchyParentId !== undefined && (() => {
+                  const parentCh = officeState.characters.get(ch.hierarchyParentId!);
+                  const parentLabel = parentCh
+                    ? parentCh.isTeamLead
+                      ? 'LEAD'
+                      : parentCh.agentName || parentCh.teamName || `Agent ${ch.hierarchyParentId}`
+                    : `Agent ${ch.hierarchyParentId}`;
+                  return (
+                    <span className="text-2xs leading-none overflow-hidden text-ellipsis block opacity-60">
+                      ↳ {parentLabel}
+                    </span>
+                  );
+                })()}
                 {ch.folderName && (
                   <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
                     {ch.folderName}

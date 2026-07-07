@@ -47,7 +47,7 @@ export interface RuntimeLifecycleCallbacks {
   /** Called when an external session is detected (first tool event from a new session).
    *  `transcriptPath` is set for file-based providers (Claude), undefined for hook-only
    *  providers (Opencode). `cwd` is the project working directory. */
-  onExternalSessionDetected?: (sessionId: string, transcriptPath?: string, cwd?: string) => void;
+  onExternalSessionDetected?: (sessionId: string, transcriptPath?: string, cwd?: string, agentName?: string) => void;
   /** Called when a session ends (exit/logout). */
   onSessionEnd?: (agentId: number) => void;
 }

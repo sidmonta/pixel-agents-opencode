@@ -35,11 +35,13 @@ export interface HookEvent {
 /** Callback for session lifecycle events detected via hooks. */
 interface SessionLifecycleCallbacks {
   /** Called when an external session is detected (unknown session_id in SessionStart).
-   *  transcriptPath is undefined for providers without transcripts (Opencode, Copilot). */
+   *  transcriptPath is undefined for providers without transcripts (Opencode, Copilot).
+   *  agentName is the specific agent for this session (undefined for file-based / multi-agent rooms). */
   onExternalSessionDetected?: (
     sessionId: string,
     transcriptPath: string | undefined,
     cwd: string,
+    agentName?: string,
   ) => void;
   /** Called when /clear is detected via hooks (SessionEnd reason=clear + SessionStart source=clear). */
   onSessionClear?: (
@@ -76,6 +78,15 @@ export class HookEventHandler {
   /** Tracks last agentName per session (Opencode omits agentName in non-session.created events).
    *  When an event arrives without agentName, the last known agent is used as routing fallback. */
   private lastAgentForSession = new Map<string, string>();
+
+  /** Child session → parent session ID mapping (Opencode sub-agent hierarchy).
+   *  Populated from sessionStart.parentID. Used to propagate active/waiting
+   *  status up the hierarchy so parent agents show as active when a child is busy. */
+  private sessionToParent = new Map<string, string>();
+
+  /** Track active children per parent agent ID to avoid clearing parent's
+   *  active status while any child is still busy. */
+  private parentActiveChildren = new Map<number, Set<number>>();
 
   constructor(
     private agents: AgentStateStore,
@@ -287,16 +298,44 @@ export class HookEventHandler {
           console.log(
             `[Pixel Agents] Hook: SessionStart(source=${source}) -> creating hooks-only agent for session ${sid}...`,
           );
+        // Pass agentName only for sub-sessions (has parentID), so root sessions
+        // still create all configured agents. Undefined agentName → create all.
         this.lifecycleCallbacks.onExternalSessionDetected?.(
           normalized.sessionId,
           undefined,
           cwd,
+          normEvent.parentID ? normalized.agentName : undefined,
         );
       } else {
         if (debug && tracked)
           console.log(
             `[Pixel Agents] Hook: SessionStart -> unknown session ${sid}..., no transcript_path or cwd`,
           );
+      }
+      // Capture parent session ID for sub-agent hierarchy propagation
+      if (normEvent.parentID && normalized.agentName) {
+        if (debug)
+          console.log(
+            `[Pixel Agents] Hook: SessionStart -> parent session ${normEvent.parentID.slice(0, 8)}..., agent=${normalized.agentName}`,
+          );
+        this.sessionToParent.set(normalized.sessionId, normEvent.parentID);
+        // Resolve child and parent pixel-agents agents
+        const childAgentId = this.sessionRouter.resolve(normalized.sessionId, normalized.agentName);
+        const parentAgentName = this.lastAgentForSession.get(normEvent.parentID);
+        const parentAgentId = parentAgentName
+          ? this.sessionRouter.resolve(normEvent.parentID, parentAgentName)
+          : undefined;
+        if (parentAgentId !== undefined && childAgentId !== undefined) {
+          if (debug)
+            console.log(
+              `[Pixel Agents] Hook: Agent ${childAgentId} (${normalized.agentName}) is child of Agent ${parentAgentId} (${parentAgentName})`,
+            );
+          this.agents.broadcast({
+            type: 'agentParentInfo',
+            id: childAgentId,
+            parentAgentId,
+          });
+        }
       }
       return;
     }
@@ -463,6 +502,7 @@ export class HookEventHandler {
       id: agentId,
       status: 'active',
     });
+    this.propagateActiveToParent(agentId);
   }
 
   private handlePostToolUse(agent: AgentState, agentId: number): void {
@@ -684,6 +724,76 @@ export class HookEventHandler {
       id: agentId,
       status: 'waiting',
       awaitingInput,
+    });
+    this.propagateWaitingToParent(agentId);
+  }
+
+  // ── Sub-agent hierarchy (Opencode parent→child status propagation) ──
+
+  /** Resolve the parent pixel-agents agent ID for a child agent. Returns
+   *  undefined if no parent relationship exists or the parent is unknown. */
+  private resolveParentAgentId(agentId: number): number | undefined {
+    const agent = this.agents.get(agentId);
+    if (!agent) return undefined;
+    const parentSessionId = this.sessionToParent.get(agent.sessionId);
+    if (!parentSessionId) return undefined;
+    const parentAgentName = this.lastAgentForSession.get(parentSessionId);
+    if (!parentAgentName) return undefined;
+    const parentId = this.sessionRouter.resolve(parentSessionId, parentAgentName);
+    if (parentId === agentId) return undefined; // safety: never self-reference
+    return parentId;
+  }
+
+  /** Mark the parent agent as active when a child starts working. */
+  private propagateActiveToParent(agentId: number): void {
+    const parentAgentId = this.resolveParentAgentId(agentId);
+    if (parentAgentId === undefined) return;
+
+    // Track that this child is now active under the parent
+    let children = this.parentActiveChildren.get(parentAgentId);
+    if (!children) {
+      children = new Set();
+      this.parentActiveChildren.set(parentAgentId, children);
+    }
+    children.add(agentId);
+
+    if (debug)
+      console.log(
+        `[Pixel Agents] Hook: Agent ${agentId} active -> propagating to parent ${parentAgentId}`,
+      );
+    this.agents.broadcast({
+      type: 'agentStatus',
+      id: parentAgentId,
+      status: 'active',
+    });
+  }
+
+  /** Mark the parent as waiting when a child goes idle, but only if no
+   *  other children are still active. */
+  private propagateWaitingToParent(agentId: number): void {
+    const parentAgentId = this.resolveParentAgentId(agentId);
+    if (parentAgentId === undefined) return;
+
+    const children = this.parentActiveChildren.get(parentAgentId);
+    if (children) {
+      children.delete(agentId);
+      if (children.size > 0) {
+        if (debug)
+          console.log(
+            `[Pixel Agents] Hook: Agent ${agentId} idle, parent ${parentAgentId} has ${children.size} other active child(ren) — keeping parent active`,
+          );
+        return; // Other children still active — keep parent active
+      }
+    }
+
+    if (debug)
+      console.log(
+        `[Pixel Agents] Hook: Agent ${agentId} idle -> propagating waiting to parent ${parentAgentId}`,
+      );
+    this.agents.broadcast({
+      type: 'agentStatus',
+      id: parentAgentId,
+      status: 'waiting',
     });
   }
 

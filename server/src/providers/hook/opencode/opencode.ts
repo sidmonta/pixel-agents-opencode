@@ -135,6 +135,7 @@ function normalizeHookEvent(
         kind: 'sessionStart',
         source: (data.source as string) || (raw.source as string) || undefined,
         cwd,
+        parentID: (info.parentID as string) || undefined,
       });
     }
 

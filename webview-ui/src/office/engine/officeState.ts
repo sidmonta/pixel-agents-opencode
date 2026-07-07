@@ -885,6 +885,12 @@ export class OfficeState {
     }
   }
 
+  setHierarchyParent(id: number, parentId: number): void {
+    const ch = this.characters.get(id);
+    if (!ch) return;
+    ch.hierarchyParentId = parentId;
+  }
+
   setAgentTokens(id: number, inputTokens: number, outputTokens: number): void {
     const ch = this.characters.get(id);
     if (!ch) return;

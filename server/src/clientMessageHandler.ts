@@ -1,6 +1,7 @@
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type { LoadedAssets, LoadedCharacterSprites, LoadedPetSprites } from './assetLoader.js';
+import { readBacklogTasks } from './backlogReader.js';
 import { readConfig, writeConfig } from './configPersistence.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
 import { claudeProvider } from './providers/index.js';
@@ -26,6 +27,8 @@ export interface ClientMessageContext {
   cache: AssetCache | null;
   /** Install/uninstall hooks side effect. Needs server url+token known only to cli.ts. */
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
+  /** Project root directory for resolving backlog/ path. */
+  projectRoot?: string;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -120,6 +123,20 @@ export function handleClientMessage(
       cfg.externalAssetDirectories = cfg.externalAssetDirectories.filter((d) => d !== removePath);
       writeConfig(cfg);
       send({ type: 'externalAssetDirectoriesUpdated', dirs: cfg.externalAssetDirectories });
+      break;
+    }
+
+    case 'requestBacklogData': {
+      const projectPath = msg.projectPath as string | undefined;
+      const root = projectPath
+        ?? [...ctx.store.values()].find((a) => a.projectDir)?.projectDir
+        ?? ctx.projectRoot;
+      if (root) {
+        const tasks = readBacklogTasks(root);
+        send({ type: 'backlogDataResponse', tasks });
+      } else {
+        send({ type: 'backlogDataResponse', tasks: [] });
+      }
       break;
     }
 

@@ -113,6 +113,8 @@ components:
         - $ref: '#/components/schemas/WorkspaceFolders'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
+        # Backlog
+        - $ref: '#/components/schemas/BacklogDataResponse'
       discriminator: type
 
     ClientMessage:
@@ -135,6 +137,7 @@ components:
         - $ref: '#/components/schemas/AddExternalAssetDirectory'
         - $ref: '#/components/schemas/RemoveExternalAssetDirectory'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        - $ref: '#/components/schemas/RequestBacklogData'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -842,6 +845,56 @@ components:
       properties:
         type:
           const: requestDiagnostics
+
+    RequestBacklogData:
+      description: Request backlog task list (server responds with backlogDataResponse).
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: requestBacklogData
+        projectPath:
+          type: string
+          description: Project root directory to read backlog from. Defaults to server's projectRoot.
+
+    BacklogDataResponse:
+      description: Response with the full backlog task list, grouped by status.
+      type: object
+      additionalProperties: false
+      required: [type, tasks]
+      properties:
+        type:
+          const: backlogDataResponse
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BacklogTask'
+
+    BacklogTask:
+      description: A single backlog task with status, assignees, and metadata.
+      type: object
+      additionalProperties: false
+      required: [id, title, status, assignee, labels]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+        assignee:
+          type: array
+          items:
+            type: string
+        labels:
+          type: array
+          items:
+            type: string
+        priority:
+          type: string
+        milestone:
+          type: string
 
     # ── Supporting schemas ─────────────────────────────────────────
 

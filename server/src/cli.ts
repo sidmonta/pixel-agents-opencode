@@ -150,8 +150,8 @@ async function main(): Promise<void> {
     const sessionRooms = new Map<string, SessionRoomInfo>();
 
     runtime.setLifecycleCallbacks({
-      onExternalSessionDetected: (sessionId, transcriptPath, cwd) => {
-        console.log(`[Pixel Agents] cli: onExternalSessionDetected(sessionId=${sessionId.slice(0, 8)}..., transcriptPath=${!!transcriptPath}, cwd=${cwd?.slice(0, 30)})`);
+      onExternalSessionDetected: (sessionId, transcriptPath, cwd, agentName) => {
+        console.log(`[Pixel Agents] cli: onExternalSessionDetected(sessionId=${sessionId.slice(0, 8)}..., transcriptPath=${!!transcriptPath}, cwd=${cwd?.slice(0, 30)}, agentName=${agentName ?? 'undefined'})`);
         if (sessionRooms.has(sessionId)) {
           console.log(`[Pixel Agents] cli: sessionRooms GUARD HIT for ${sessionId.slice(0, 8)}...`);
           return;
@@ -165,9 +165,60 @@ async function main(): Promise<void> {
             const { layout, roomInfo } = addSessionRoom(saved, sessionId, 1);
             sessionRooms.set(sessionId, roomInfo);
             store.broadcast({ type: 'layoutLoaded', layout });
+          } else if (agentName) {
+            // Hook-only provider (Opencode), sub-session: known agent name,
+            // create exactly one agent for this session (no duplicates).
+            const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
+            if (!saved) return;
+            const { layout, roomInfo } = addSessionRoom(saved, sessionId, 1);
+            sessionRooms.set(sessionId, roomInfo);
+            store.broadcast({ type: 'layoutLoaded', layout });
+
+            console.log(`[Pixel Agents] cli: Creating agent ${agentName} for session ${sessionId.slice(0, 8)}...`);
+            const agentId = store.nextAgentId.current++;
+            const agent: AgentState = {
+              id: agentId,
+              sessionId,
+              terminalRef: undefined,
+              isExternal: true,
+              projectDir: cwd ?? process.cwd(),
+              jsonlFile: '',
+              fileOffset: 0,
+              lineBuffer: '',
+              activeToolIds: new Set(),
+              activeToolStatuses: new Map(),
+              activeToolNames: new Map(),
+              activeSubagentToolIds: new Map(),
+              activeSubagentToolNames: new Map(),
+              backgroundAgentToolIds: new Set(),
+              isWaiting: false,
+              permissionSent: false,
+              hadToolsInTurn: false,
+              hookDelivered: true,
+              hooksOnly: true,
+              lastDataAt: Date.now(),
+              linesProcessed: 0,
+              seenUnknownRecordTypes: new Set(),
+              folderName: cwd ? path.basename(cwd) : undefined,
+              inputTokens: 0,
+              outputTokens: 0,
+              agentName,
+              providerId: 'opencode',
+            };
+            store.set(agentId, agent);
+            runtime.registerAgent(sessionId, agentId, agentName);
+            store.broadcast({ type: 'agentTeamInfo', id: agentId, agentName });
+            store.persist();
+
+            // Inform webview of the project root for backlog / folder picker
+            const projectDir = cwd ?? process.cwd();
+            store.broadcast({
+              type: 'workspaceFolders',
+              folders: [{ name: path.basename(projectDir), path: projectDir }],
+            });
           } else {
-            // Hook-only provider (Opencode): one agent per agent name,
-            // each with compound key `<sessionId|agentName>`.
+            // Hook-only provider (Opencode), root session (no specific agentName):
+            // create one agent per configured name so all agents appear in the office.
             const agentNames = readOpencodeAgentNames();
             if (agentNames.length === 0) return;
             const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
@@ -215,6 +266,13 @@ async function main(): Promise<void> {
               store.broadcast({ type: 'agentTeamInfo', id: agentId, agentName });
             }
             store.persist();
+
+            // Inform webview of the project root for backlog / folder picker
+            const projectDir = cwd ?? process.cwd();
+            store.broadcast({
+              type: 'workspaceFolders',
+              folders: [{ name: path.basename(projectDir), path: projectDir }],
+            });
           }
         } catch (err) {
           console.error('[Pixel Agents] Failed to add session room:', err);
@@ -235,7 +293,7 @@ async function main(): Promise<void> {
 
           // Remove ALL agents for this session (supports compound-key multi-agent)
           const agentIdsToRemove = [...store.values()]
-            .filter((a) => a.sessionId === agent.sessionId && a.id !== agentId)
+            .filter((a) => a.sessionId === agent.sessionId)
             .map((a) => a.id);
           for (const id of agentIdsToRemove) {
             runtime.removeAgent(id);
@@ -285,6 +343,7 @@ async function main(): Promise<void> {
       staticDir,
       assetCache,
       onSetHooksEnabled,
+      projectRoot: process.cwd(),
     });
     currentConfig = { port: config.port, token: config.token };
 

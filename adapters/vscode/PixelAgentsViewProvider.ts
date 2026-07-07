@@ -29,6 +29,7 @@ import {
   sendPetSpritesToWebview,
   sendWallTilesToWebview,
 } from '../../server/src/assetLoader.js';
+import { readBacklogTasks } from '../../server/src/backlogReader.js';
 import { readConfig, writeConfig } from '../../server/src/configPersistence.js';
 import { setTerminalAdapter } from '../../server/src/fileWatcher.js';
 import type { LayoutWatcher } from '../../server/src/layoutPersistence.js';
@@ -570,6 +571,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           });
         }
         this.webview?.postMessage({ type: 'agentDiagnostics', agents: diagnostics });
+      } else if (message.type === 'requestBacklogData') {
+        const root = (message.projectPath as string | undefined)
+          ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const tasks = root ? readBacklogTasks(root) : [];
+        this.webview?.postMessage({ type: 'backlogDataResponse', tasks });
       } else if (message.type === 'openSessionsFolder') {
         const projectDir = getProjectDirPath();
         if (projectDir && fs.existsSync(projectDir)) {

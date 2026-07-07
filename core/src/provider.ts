@@ -59,6 +59,9 @@ export type AgentEvent =
       /** Working directory the session was started in. Used to match pending
        *  external sessions against known workspace folders. */
       cwd?: string;
+      /** Parent session ID (Opencode sub-agent spawn). The session that
+       *  triggered this session via Task/Agent tool. */
+      parentID?: string;
     }
   | { kind: 'sessionEnd'; reason?: string };
 
