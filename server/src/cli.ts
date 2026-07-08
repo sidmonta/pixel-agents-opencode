@@ -177,23 +177,8 @@ async function main(): Promise<void> {
           } else if (agentName) {
             // Hook-only provider (Opencode), sub-session: known agent name,
             // create exactly one agent for this session (no duplicates).
-            const saved = readLayoutFromFile() ?? assetCache?.defaultLayout ?? null;
-            if (!saved) return;
-            if (existingSessionCount === 0) {
-              console.log('[Pixel Agents] cli: first session uses bundled base room');
-            } else {
-              const { layout, roomInfo } = addSessionRoom(
-                saved,
-                sessionId,
-                assetCache.defaultLayout,
-                sessionRooms.size,
-              );
-              writeLayoutToFile(layout);
-              sessionRooms.set(sessionId, roomInfo);
-              store.broadcast({ type: 'layoutLoaded', layout });
-            }
-
-            console.log(`[Pixel Agents] cli: Creating agent ${agentName} for session ${sessionId.slice(0, 8)}...`);
+            // No room is created — sub-agents share the parent's room.
+            console.log(`[Pixel Agents] cli: Creating sub-agent ${agentName} for session ${sessionId.slice(0, 8)}...`);
             const agentId = store.nextAgentId.current++;
             const agent: AgentState = {
               id: agentId,
