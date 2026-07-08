@@ -130,6 +130,22 @@ export function ToolOverlay({
         const isHovered = hoveredId === id;
         const isSub = ch.isSubagent;
 
+        // Determine dot color (shared between name label and detailed panel)
+        const tools = agentTools[id];
+        const hasActiveTools = tools?.some((t) => !t.done);
+        const isActive = ch.isActive;
+        const hasWaiting = ch.bubbleType === 'waiting';
+        const hasPermission =
+          (isSub && ch.bubbleType === 'permission') ||
+          tools?.some((t) => t.permissionWait && !t.done);
+
+        let dotColor: string | null = null;
+        if (hasPermission || hasWaiting) {
+          dotColor = 'var(--color-status-permission)';
+        } else if (isActive && hasActiveTools) {
+          dotColor = 'var(--color-status-active)';
+        }
+
         // Position above character
         const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
         const screenX = (deviceOffsetX + ch.x * zoom) / dpr;
@@ -159,17 +175,25 @@ export function ToolOverlay({
                 data-testid="agent-overlay"
                 data-agent-id={id}
               >
-                <span
-                  className="text-text/80"
-                  style={{
-                    fontSize: '18pt',
-                    textShadow: '0 0 15px var(--color-bg), 0 0 12px var(--color-bg)',
-                    lineHeight: 1,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {displayName}
-                </span>
+                <div className="flex items-center gap-2">
+                  {dotColor && (
+                    <span
+                      className={`w-5 h-5 rounded-full shrink-0 ${isActive && !hasPermission && !hasWaiting ? 'pixel-pulse' : ''}`}
+                      style={{ background: dotColor }}
+                    />
+                  )}
+                  <span
+                    className="text-text/80"
+                    style={{
+                      fontSize: '18pt',
+                      textShadow: '0 0 15px var(--color-bg), 0 0 12px var(--color-bg)',
+                      lineHeight: 1,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {displayName}
+                  </span>
+                </div>
               </div>
             );
           }
@@ -190,14 +214,13 @@ export function ToolOverlay({
 
         // Get activity text
         const hasWaitingBubble = ch.bubbleType === 'waiting';
-        const subHasPermission = isSub && ch.bubbleType === 'permission';
         let activityText: string;
         if (hasWaitingBubble && ch.waitingAwaitingInput) {
           // Idle, waiting on the user -> dedicated label. A finished turn (Stop)
           // shows only the checkmark and falls through to the normal idle text.
           activityText = WAITING_INPUT_ACTIVITY_TEXT;
         } else if (isSub) {
-          if (subHasPermission) {
+          if (ch.bubbleType === 'permission') {
             activityText = 'Needs approval';
           } else {
             const sub = subagentCharacters.find((s) => s.id === id);
@@ -211,20 +234,6 @@ export function ToolOverlay({
             ch.bubbleType,
             ch.waitingAwaitingInput ?? false,
           );
-        }
-
-        // Determine dot color
-        const tools = agentTools[id];
-        const hasPermission = subHasPermission || tools?.some((t) => t.permissionWait && !t.done);
-        const hasActiveTools = tools?.some((t) => !t.done);
-        const isActive = ch.isActive;
-        const hasWaiting = ch.bubbleType === 'waiting';
-
-        let dotColor: string | null = null;
-        if (hasPermission || hasWaiting) {
-          dotColor = 'var(--color-status-permission)';
-        } else if (isActive && hasActiveTools) {
-          dotColor = 'var(--color-status-active)';
         }
 
         // Team info

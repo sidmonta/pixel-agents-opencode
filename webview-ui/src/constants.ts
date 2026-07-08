@@ -55,6 +55,9 @@ export const BUBBLE_VERTICAL_OFFSET_PX = 24;
 export const FALLBACK_FLOOR_COLOR = '#808080';
 
 // ── Rendering - Overlay Colors (canvas, not CSS) ─────────────
+export const STATUS_GLOW_ACTIVE_COLOR = 'rgba(55, 148, 255, 0.35)';
+export const STATUS_GLOW_ACTIVE_ALPHA_EXPANDED = 0.15;
+export const STATUS_GLOW_ACTIVE_ALPHA_CORE = 0.25;
 export const SEAT_OWN_COLOR = 'rgba(0, 127, 212, 0.35)';
 export const SEAT_AVAILABLE_COLOR = 'rgba(0, 200, 80, 0.35)';
 export const SEAT_BUSY_COLOR = 'rgba(220, 50, 50, 0.35)';

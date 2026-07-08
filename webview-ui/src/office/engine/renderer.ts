@@ -30,6 +30,9 @@ import {
   SELECTED_OUTLINE_ALPHA,
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
+  STATUS_GLOW_ACTIVE_ALPHA_CORE,
+  STATUS_GLOW_ACTIVE_ALPHA_EXPANDED,
+  STATUS_GLOW_ACTIVE_COLOR,
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
@@ -181,24 +184,55 @@ export function renderScene(
       continue;
     }
 
-    // White outline: full opacity for selected, 50% for hover
+    // Selection/hover outline + status glow
     const isSelected = selectedAgentId !== null && ch.id === selectedAgentId;
     const isHovered = hoveredAgentId !== null && ch.id === hoveredAgentId;
-    if (isSelected || isHovered) {
-      const outlineAlpha = isSelected ? SELECTED_OUTLINE_ALPHA : HOVERED_OUTLINE_ALPHA;
+    const isWorking = ch.state === CharacterState.TYPE && ch.isActive;
+    if (isSelected || isHovered || isWorking) {
       const outlineData = getOutlineSprite(spriteData);
       const outlineCached = getCachedSprite(outlineData, zoom);
-      const olDrawX = drawX - zoom; // 1 sprite-pixel offset, scaled
-      const olDrawY = drawY - zoom; // outline follows sitting offset via drawY
-      drawables.push({
-        zY: charZY - OUTLINE_Z_SORT_OFFSET, // sort just before character
-        draw: (c) => {
-          c.save();
-          c.globalAlpha = outlineAlpha;
-          c.drawImage(outlineCached, olDrawX, olDrawY);
-          c.restore();
-        },
-      });
+      const olDrawX = drawX - zoom;
+      const olDrawY = drawY - zoom;
+
+      // Selection/hover outline: full opacity for selected, 50% for hover
+      if (isSelected || isHovered) {
+        const outlineAlpha = isSelected ? SELECTED_OUTLINE_ALPHA : HOVERED_OUTLINE_ALPHA;
+        drawables.push({
+          zY: charZY - OUTLINE_Z_SORT_OFFSET,
+          draw: (c) => {
+            c.save();
+            c.globalAlpha = outlineAlpha;
+            c.drawImage(outlineCached, olDrawX, olDrawY);
+            c.restore();
+          },
+        });
+      }
+
+      // Status glow for working characters (subtle colored glow on canvas)
+      if (isWorking) {
+        const cz = charZY - OUTLINE_Z_SORT_OFFSET - 0.0001;
+        drawables.push({
+          zY: cz,
+          draw: (c) => {
+            c.save();
+            c.globalAlpha = STATUS_GLOW_ACTIVE_ALPHA_EXPANDED;
+            for (const offset of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+              c.drawImage(outlineCached, olDrawX + offset[0] * zoom, olDrawY + offset[1] * zoom);
+            }
+            c.globalAlpha = STATUS_GLOW_ACTIVE_ALPHA_CORE;
+            c.drawImage(outlineCached, olDrawX, olDrawY);
+            c.globalCompositeOperation = 'source-atop';
+            c.fillStyle = STATUS_GLOW_ACTIVE_COLOR;
+            c.fillRect(
+              olDrawX - zoom,
+              olDrawY - zoom,
+              outlineCached.width + 2 * zoom,
+              outlineCached.height + 2 * zoom,
+            );
+            c.restore();
+          },
+        });
+      }
     }
 
     drawables.push({
